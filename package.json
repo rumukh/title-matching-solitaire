@@ -1,0 +1,13 @@
+{
+  "name": "quiet-mahjong-solitaire",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone offline mahjong solitaire. Dependencies are for development tests only.",
+  "scripts": {
+    "test": "node --test tests/engine.test.cjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0"
+  }
+}
