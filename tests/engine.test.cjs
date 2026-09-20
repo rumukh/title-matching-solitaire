@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { createHash } = require("node:crypto");
 
 const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const source = html.match(/<script id="mahjong-engine">([\s\S]*?)<\/script>/)[1];
@@ -55,6 +56,63 @@ test("the standard deck has 34 ordinary types four times and 8 unique bonus tile
   }
   for (const first of M.FACES) for (const second of M.FACES) {
     assert.equal(M.matches(first, second), first === second || /^[fs]/.test(first) && first[0] === second[0]);
+  }
+});
+
+test("every numbered bamboo tile has the correct number of distinct stalks", () => {
+  const start = html.indexOf("    const faceCache = new Map();");
+  const end = html.indexOf("    const ACHIEVEMENTS = [", start);
+  const artwork = vm.runInNewContext(html.slice(start, end) + "; artwork");
+  const shapes = face => [...artwork(face).matchAll(/<path\b[^>]*>/g)].map(match => match[0]);
+  for (let rank = 2; rank <= 9; rank++) {
+    assert.equal(shapes("b" + rank).length, rank);
+    assert.equal(new Set(shapes("b" + rank)).size, rank);
+  }
+  assert.notDeepEqual([...new Set(shapes("b7"))], [...new Set(shapes("b8"))]);
+});
+
+test("late layouts increase layering and blocking while retaining certified solutions", () => {
+  const means = [];
+  for (const [level, layers] of [["49", 5], ["50", 6], ["100", 7]]) {
+    let free = 0;
+    for (let seed = 0; seed < 32; seed++) {
+      const deal = M.generate(level, seed);
+      assert.equal(deal.tiles.length, 144);
+      assert.equal(Math.max(...deal.tiles.map(t => t.z)) + 1, layers);
+      free += M.freeIds(deal.tiles).length;
+      verifyIndependently(deal.tiles, deal.solution);
+    }
+    means.push(free / 32);
+  }
+  assert.ok(means[1] < means[0] - 5, "Level 50 should lock materially more tiles than level 49");
+  assert.ok(means[2] < means[1], "Level 100 should add another measurable difficulty tier");
+  const levels = ["50", "51", "100", "250", "1000", "9007199254740993123", "9".repeat(400)];
+  const geometries = levels.map(level => JSON.stringify(M.layout(level, 42)));
+  assert.equal(new Set(geometries).size, levels.length);
+  for (const level of levels) {
+    const deal = M.generate(level, 42);
+    assert.ok(deal.tiles.every(t => Number.isFinite(t.x) && Number.isFinite(t.y) && t.z < 8));
+    verifyIndependently(deal.tiles, deal.solution);
+    const partial = plain(deal.tiles);
+    for (const id of deal.solution.slice(0, 20).flat()) partial.find(t => t.id === id).removed = true;
+    const shuffled = M.reshuffle(partial, level, 54321);
+    verifyIndependently(shuffled.tiles, shuffled.solution);
+    assert.deepEqual(counts(shuffled.tiles.filter(t => !t.removed)), counts(partial.filter(t => !t.removed)));
+  }
+});
+
+test("legacy generator reproduces existing saved deals exactly", () => {
+  const fingerprints = [
+    ["1", "68b5bc0814ae0c24a5c237a6eefe4c436c31334bce454e60c8b0e884493d7328"],
+    ["49", "8e46420f8c2906ceec2c5706d2013968f99a6a45128b8a7cec934dde1d64c764"],
+    ["1000", "8e46420f8c2906ceec2c5706d2013968f99a6a45128b8a7cec934dde1d64c764"]
+  ];
+  for (const [level, expected] of fingerprints) {
+    const hash = createHash("sha256").update(JSON.stringify(M.generate(level, 12345, 1))).digest("hex");
+    assert.equal(hash, expected);
+  }
+  for (const level of ["1", "3", "4", "16", "49"]) {
+    assert.deepEqual(plain(M.generate(level, 12345)), plain(M.generate(level, 12345, 1)));
   }
 });
 

@@ -1,7 +1,8 @@
 "use strict";
 const { defineConfig } = require("@playwright/test");
+const path = require("node:path");
 module.exports = defineConfig({
-  testDir: ".\\tests",
+  testDir: path.join(__dirname, "tests"),
   testMatch: "**/browser.spec.cjs",
   fullyParallel: true,
   workers: 2,
@@ -17,11 +18,11 @@ module.exports = defineConfig({
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
     { name: "firefox", use: { browserName: "firefox" } },
-    { name: "webkit", use: { browserName: "webkit" } },
+    { name: "webkit", timeout: 180000, use: { browserName: "webkit" } },
     { name: "mobile", use: { browserName: "chromium", viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true } }
   ],
   webServer: {
-    command: "node tests\\server.cjs",
+    command: `node "${path.join(__dirname, "tests", "server.cjs")}"`,
     url: "http://127.0.0.1:4173",
     reuseExistingServer: false
   }

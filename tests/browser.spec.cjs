@@ -125,8 +125,8 @@ test("full victory awards bonuses once, persists records and advances the level"
   expect((await state(page)).level).toBe("2");
 });
 
-test("standard 144 tile board completes in certificate order", async ({ page }) => {
-  test.setTimeout(180000);
+test("standard 144 tile board completes in certificate order", async ({ page, browserName }) => {
+  test.setTimeout(browserName === "webkit" ? 300000 : 90000);
   await start(page);
   await fixture(page, async saved => {
     const deal = await page.evaluate(() => Mahjong.generate("4", 12345));
@@ -188,6 +188,104 @@ test("tool limits, restart confirmation and progress-reset confirmation are enfo
   await page.getByRole("button", { name: "Да, удалить весь прогресс", exact: true }).click();
   expect((await state(page)).game).toBeNull();
   expect((await state(page)).level).toBe("1");
+});
+
+test("bamboo seven and eight are visually distinct and still obey matching rules", async ({ page }) => {
+  await start(page);
+  await fixture(page, saved => {
+    saved.game.tiles = ["b7", "b7", "b8", "b8"].map((face, id) => ({
+      id, x: id * 2, y: 0, z: 0, face, removed: false
+    }));
+    saved.game.solution = [[0, 1], [2, 3]];
+  });
+  const stalks = id => tile(page, id).locator("svg path").evaluateAll(paths => paths.map(p => p.getAttribute("d")));
+  expect(new Set(await stalks(0)).size).toBe(7);
+  expect(new Set(await stalks(2)).size).toBe(8);
+  await tile(page, 0).click();
+  await tile(page, 2).click();
+  await expect(page.locator("#board .tile")).toHaveCount(4);
+  await expect(tile(page, 2)).toHaveAttribute("aria-pressed", "true");
+  await tile(page, 3).click();
+  await expect(page.locator("#board .tile")).toHaveCount(2);
+});
+
+test("suspended tabs and back-forward cache time never count as active play", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.testClock = { now: 0, hidden: false };
+    Object.defineProperty(performance, "now", { value: () => window.testClock.now });
+    Object.defineProperty(document, "hidden", { get: () => window.testClock.hidden });
+    // Suspending intervals models a background tab frozen by the browser.
+    window.setInterval = callback => { window.testTick = callback; return 1; };
+  });
+  await start(page);
+  const elapsed = await page.evaluate(key => {
+    const read = () => {
+      window.dispatchEvent(new Event("beforeunload"));
+      return JSON.parse(localStorage.getItem(key)).game.elapsed;
+    };
+    const result = [];
+    testClock.now = 1000; testTick(); result.push(read());
+    testClock.now = 1250; testClock.hidden = true;
+    document.dispatchEvent(new Event("visibilitychange")); result.push(read());
+    testClock.now = 61250; testClock.hidden = false;
+    document.dispatchEvent(new Event("visibilitychange")); result.push(read());
+    testClock.now = 62250; testTick(); result.push(read());
+    testClock.now = 62500;
+    window.dispatchEvent(new Event("pagehide")); result.push(read());
+    testClock.now = 122500;
+    window.dispatchEvent(new Event("pageshow")); result.push(read());
+    testClock.now = 123000; testTick(); result.push(read());
+    return result;
+  }, KEY);
+  expect(elapsed).toEqual([1000, 1250, 1250, 2250, 2500, 2500, 3000]);
+});
+
+test("legacy saved games restart with their original layout and tile identities", async ({ page }) => {
+  await start(page);
+  let original;
+  await fixture(page, async saved => {
+    original = await page.evaluate(() => Mahjong.generate("100", 12345, 1));
+    saved.level = saved.game.level = "100";
+    saved.game.seed = 12345;
+    saved.game.tiles = original.tiles;
+    saved.game.solution = original.solution;
+    delete saved.game.generatorVersion;
+  });
+  await clickPair(page, original.solution[0]);
+  await page.getByRole("button", { name: "Заново", exact: true }).click();
+  await page.getByRole("button", { name: "Перезапустить уровень", exact: true }).click();
+  const saved = await state(page);
+  expect(saved.game.tiles).toEqual(original.tiles);
+  expect(saved.game.solution).toEqual(original.solution);
+  expect(saved.game.generatorVersion).toBe(1);
+});
+
+test("new late-game layouts fit, save and remain solvable after restarting", async ({ page }) => {
+  await start(page);
+  for (const level of ["50", "100", "1000"]) {
+    let original;
+    await fixture(page, async saved => {
+      original = await page.evaluate(level => Mahjong.generate(level, 42), level);
+      saved.level = saved.game.level = level;
+      saved.game.seed = 42;
+      saved.game.generatorVersion = 2;
+      saved.game.tiles = original.tiles;
+      saved.game.solution = original.solution;
+    });
+    await expect.poll(() => page.evaluate(() => {
+      const viewport = document.getElementById("board-viewport").getBoundingClientRect();
+      return [...document.querySelectorAll("#board .tile")].every(el => {
+        const tile = el.getBoundingClientRect();
+        return tile.left >= viewport.left && tile.right <= viewport.right && tile.top >= viewport.top && tile.bottom <= viewport.bottom;
+      });
+    })).toBe(true);
+    await page.getByRole("button", { name: "Заново", exact: true }).click();
+    await page.getByRole("button", { name: "Перезапустить уровень", exact: true }).click();
+    expect((await state(page)).game.tiles).toEqual(original.tiles);
+    await page.reload();
+    await page.getByRole("button", { name: "Продолжить", exact: true }).click();
+    expect((await state(page)).game.tiles).toEqual(original.tiles);
+  }
 });
 
 test("clock pauses in menus and dialogs; keyboard controls remain usable", async ({ page }) => {

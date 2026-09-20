@@ -379,29 +379,40 @@ The complete offline application lives in this file. No network requests or runt
     const key = face => /^[fs]/.test(face) ? face[0] : face;
     const matches = (a, b) => key(a) === key(b);
     const overlap = (a, b) => Math.min(a + 1, b + 1) - Math.max(a, b) > EPS;
-    function difficulty(level) {
+    function layout(level, seed, generatorVersion = 2) {
       const n = BigInt(level);
-      return Number(n > 80n ? 80n : n);
-    }
-    function layout(level, seed) {
-      const n = difficulty(level);
-      const rng = random(seed);
+      let pressure = 0, layoutSeed = seed;
+      if (generatorVersion >= 2 && n >= 50n) {
+        const digits = n.toString();
+        const logarithm = Math.log2(Number(digits.slice(0, 15))) + Math.max(0, digits.length - 15) * Math.log2(10);
+        const growth = logarithm - Math.log2(49);
+        pressure = growth / (growth + 4);
+        // Later levels approach a playable density ceiling without the old level-49
+        // cutoff. The whole level number contributes to reproducible new variants.
+        let salt = 2166136261;
+        for (const digit of digits) salt = Math.imul(salt ^ digit.charCodeAt(0), 16777619);
+        layoutSeed ^= salt;
+      }
+      const rng = random(layoutSeed);
       let layers;
-      if (n === 1) layers = [[4, 6, 8, 8, 6, 4], [4, 4, 4]];
-      else if (n === 2) layers = [[6, 8, 10, 10, 8, 6], [6, 6, 6, 6]];
-      else if (n === 3) layers = [[8, 10, 12, 12, 10, 8], [6, 8, 8, 8, 6], [4, 4, 4]];
-      else if (n < 8) layers = [[8, 10, 12, 12, 12, 12, 10, 8], [6, 8, 8, 8, 8, 6], [4, 4, 4, 4]];
-      else if (n < 16) layers = [[8, 10, 12, 12, 12, 10, 8], [6, 8, 10, 10, 8, 6], [4, 6, 6, 4], [2, 2]];
-      else layers = [[6, 8, 10, 12, 12, 10, 8, 6], [4, 6, 8, 8, 6, 4], [4, 6, 6, 4], [4, 4, 4], [2, 2]];
+      if (n === 1n) layers = [[4, 6, 8, 8, 6, 4], [4, 4, 4]];
+      else if (n === 2n) layers = [[6, 8, 10, 10, 8, 6], [6, 6, 6, 6]];
+      else if (n === 3n) layers = [[8, 10, 12, 12, 10, 8], [6, 8, 8, 8, 6], [4, 4, 4]];
+      else if (n < 8n) layers = [[8, 10, 12, 12, 12, 12, 10, 8], [6, 8, 8, 8, 8, 6], [4, 4, 4, 4]];
+      else if (n < 16n) layers = [[8, 10, 12, 12, 12, 10, 8], [6, 8, 10, 10, 8, 6], [4, 6, 6, 4], [2, 2]];
+      else if (n < 50n || generatorVersion === 1) layers = [[6, 8, 10, 12, 12, 10, 8, 6], [4, 6, 8, 8, 6, 4], [4, 6, 6, 4], [4, 4, 4], [2, 2]];
+      else if (n < 100n) layers = [[8, 10, 10, 10, 10, 8], [6, 8, 8, 8, 8, 6], [4, 6, 6, 4], [4, 4, 4], [4, 4], [2, 2]];
+      else layers = [[8, 8, 8, 8, 8, 8], [6, 6, 6, 6, 6, 6], [6, 6, 6, 6], [4, 4, 4, 4], [4, 4, 4], [2, 2], [2, 2]];
       const tiles = [];
       const maxRows = Math.max(...layers.map(rows => rows.length));
       const maxCols = Math.max(...layers.flat());
       for (let z = 0; z < layers.length; z++) {
-        const shift = n >= 5 && z > 0 ? (rng() < .5 ? -1 : 1) * Math.min(.5, (n - 4) / 32) : 0;
+        const shift = n >= 5n && z > 0 ? (rng() < .5 ? -1 : 1) * (Math.min(.5, Number(n - 4n) / 32) + pressure / 8) : 0;
+        const rise = pressure && z > 0 ? (rng() < .5 ? -1 : 1) * pressure / 4 : 0;
         layers[z].forEach((length, row) => {
-          const stagger = n >= 25 && z > 0 ? (row % 2 ? .25 : -.25) * Math.min(1, (n - 24) / 25) : 0;
+          const stagger = n >= 25n && z > 0 ? (row % 2 ? .25 : -.25) * Math.min(1, Number(n - 24n) / 25) : 0;
           for (let column = 0; column < length; column++) {
-            tiles.push({ id: tiles.length, x: (maxCols - length) / 2 + column + shift + stagger, y: (maxRows - layers[z].length) / 2 + row, z, removed: false });
+            tiles.push({ id: tiles.length, x: (maxCols - length) / 2 + column + shift + stagger, y: (maxRows - layers[z].length) / 2 + row + rise, z, removed: false });
           }
         });
       }
@@ -521,8 +532,8 @@ The complete offline application lives in this file. No network requests or runt
       }
       return present.size === 0;
     }
-    function generate(level, seed) {
-      const tiles = layout(level, seed);
+    function generate(level, seed, generatorVersion = 2) {
+      const tiles = layout(level, seed, generatorVersion);
       const solution = solveGeometry(tiles, seed ^ 0x13579BDF) || canonicalOrder(tiles);
       const bag = pairBag(deck(), random(seed ^ 0x2468ACE0)).slice(0, tiles.length / 2);
       return { tiles: assign(tiles, solution, bag), solution };
@@ -627,7 +638,8 @@ The complete offline application lives in this file. No network requests or runt
           const rows = Math.ceil(n / cols);
           for (let i = 0; i < n; i++) {
             const row = Math.floor(i / cols), col = i % cols;
-            const x = n % cols && row === rows - 1 ? 26 : 26 + (col - (cols - 1) / 2) * 15;
+            const rowLength = Math.min(cols, n - row * cols);
+            const x = 26 + (col - (rowLength - 1) / 2) * 15;
             const y = 34 + (row - (rows - 1) / 2) * 20;
             body += `<path d="M${x - 2} ${y - 7}v14m4-14v14m-7-12h10m-10 10h10m-8-5h6" stroke="${i === 4 ? red : green}" stroke-width="1.9" stroke-linecap="round"/>`;
           }
@@ -705,6 +717,7 @@ The complete offline application lives in this file. No network requests or runt
       if (Object.entries(data.records).some(([level, best]) => !/^[1-9]\d*$/.test(level) || !record(best) || !integer(best.score) || !integer(best.time))) return false;
       const g = data.game;
       if (g === null) return true;
+      if (g?.generatorVersion !== undefined && ![1, 2].includes(g.generatorVersion)) return false;
       if (!g || g.level !== data.level || !validTiles(g.tiles) || !["playing", "won"].includes(g.status) ||
           !["seed", "score", "elapsed", "hintsUsed", "shufflesUsed", "undoUsed", "combo", "maxCombo", "peakPairs", "bonus"].every(k => integer(g[k])) ||
           g.hintsUsed > HINT_LIMIT || g.shufflesUsed > SHUFFLE_LIMIT || g.combo > 10 || g.maxCombo > 10 ||
@@ -741,6 +754,7 @@ The complete offline application lives in this file. No network requests or runt
     let store = load();
     let screen = "menu", selected = null, hinted = [], graph = null, busy = false, zoomed = false;
     let lastTick = performance.now(), lastSave = lastTick, toastTimeout, hintTimeout;
+    let pageVisible = !document.hidden, pageActive = true;
     let animationGeneration = 0, audioContext = null, confettiFrame = 0;
     let achievementQueue = [], bannerTimeout = 0;
     const dialog = $("dialog");
@@ -759,9 +773,9 @@ The complete offline application lives in this file. No network requests or runt
       crypto.getRandomValues(values);
       return values[0];
     }
-    function newGame(level, gameSeed = seed(), peakPairs = 0) {
-      const deal = Mahjong.generate(level, gameSeed);
-      return { level, seed: gameSeed, ...deal, history: [], score: 0, elapsed: 0, hintsUsed: 0, shufflesUsed: 0,
+    function newGame(level, gameSeed = seed(), peakPairs = 0, generatorVersion = 2) {
+      const deal = Mahjong.generate(level, gameSeed, generatorVersion);
+      return { level, seed: gameSeed, generatorVersion, ...deal, history: [], score: 0, elapsed: 0, hintsUsed: 0, shufflesUsed: 0,
         undoUsed: 0, combo: 0, lastMatch: null, maxCombo: 0, peakPairs, status: "playing", bonus: 0 };
     }
     function time(ms) {
@@ -772,7 +786,7 @@ The complete offline application lives in this file. No network requests or runt
     function layoutName(level) {
       const n = BigInt(level);
       return n === 1n ? "Первые шаги" : n === 2n ? "Бамбуковый двор" : n === 3n ? "Тихий сад" :
-        n < 8n ? "Черепаха" : n < 16n ? "Нефритовая башня" : "Горный храм";
+        n < 8n ? "Черепаха" : n < 16n ? "Нефритовая башня" : n < 50n ? "Горный храм" : n < 100n ? "Облачная пагода" : "Семь вершин";
     }
     function toast(message) {
       $("toast").textContent = message;
@@ -784,14 +798,14 @@ The complete offline application lives in this file. No network requests or runt
     function clearCombo() { if (store.game) { store.game.combo = 0; store.game.lastMatch = null; } }
     function tick() {
       const now = performance.now();
-      if (screen === "game" && !dialog.open && !document.hidden && store.game?.status === "playing") {
+      if (screen === "game" && !dialog.open && pageVisible && pageActive && store.game?.status === "playing") {
         store.game.elapsed += Math.max(0, Math.round(now - lastTick));
         if (store.game.lastMatch !== null && store.game.elapsed - store.game.lastMatch > COMBO_WINDOW) clearCombo();
         $("timer").textContent = time(store.game.elapsed);
         $("combo").textContent = store.game.combo > 1 ? `Комбо ×${store.game.combo}` : "";
       }
       lastTick = now;
-      if (now - lastSave > 5000 && store.game && !document.hidden) { save(); lastSave = now; }
+      if (now - lastSave > 5000 && store.game && pageVisible && pageActive) { save(); lastSave = now; }
     }
 
     // Audio is synthesized only after a user gesture; unsupported/blocked audio is reported.
@@ -1100,7 +1114,22 @@ The complete offline application lives in this file. No network requests or runt
       openDialog(`<div class="victory">${icon("award", "dialog-emblem")}<h2 id="dialog-title">Стол чист.<br>Голова — тоже.</h2><p>Уровень ${levelText(g.level)} завершён. Отличная партия!</p><div class="victory-stats"><div><span>ВРЕМЯ</span><strong>${time(g.elapsed)}</strong></div><div><span>ОЧКИ</span><strong>${numberFormat.format(g.score)}</strong></div><div><span>ПОДСКАЗКИ</span><strong>${g.hintsUsed} / ${HINT_LIMIT}</strong></div><div><span>ЛУЧШЕЕ КОМБО</span><strong>×${g.maxCombo}</strong></div></div>${g.bonus ? '<p class="bonus">+1 000 за игру без подсказок и перемешиваний</p>' : '<p>Каждая партия — ещё немного мастерства.</p>'}<div class="dialog-actions"><button class="primary" data-action="next">Следующий уровень ${icon("arrow")}</button><button class="tool" data-action="menu">Главное меню</button></div></div>`, "victory");
     }
     function showHelp() {
-      openDialog(`<h2 id="dialog-title">Одна пара за другой</h2><p>Это маджонг-пасьянс для одного игрока. Цель — убрать со стола все тайлы.</p><div class="rule-pair" aria-hidden="true"><div class="tile">${artwork("d5")}</div><div class="tile">${artwork("d5")}</div></div><ol class="rules"><li>Выберите два одинаковых <strong>свободных</strong> тайла: сверху ничего нет, слева <strong>или</strong> справа — открытый край.</li><li>Любой цветок совпадает с любым цветком, любой сезон — с любым сезоном. Их рисунки могут отличаться.</li><li>Повторный клик снимает выделение. За пару — 100 очков. Следующая пара в течение 6 секунд повышает комбо, максимум ×10.</li><li>На уровень: 3 подсказки, 2 перемешивания и неограниченная отмена. Отмена перемешивания не возвращает лимит.</li><li>Без подсказок и перемешиваний — бонус 1 000 очков. Перезапуск сбрасывает серию побед; повторные пары не увеличивают общий счётчик.</li><li>Первые уровни: 48, 72 и 108 тайлов. Начиная с четвёртого — полный набор 144. Каждая новая раскладка решаема, но выбранный путь может привести в тупик.</li></ol><p>На телефоне увеличьте тайлы кнопкой с лупой и прокручивайте стол. Клавиатура: Tab или стрелки — выбор, Enter — тайл, H — подсказка, Z — отмена, S — перемешивание, Esc — меню. Время в меню и на скрытой вкладке не учитывается. Выход из игры или использование инструментов прерывает комбо.</p><div class="dialog-actions"><button class="primary" data-action="close-dialog">Всё понятно</button></div>`);
+      openDialog(`
+        <h2 id="dialog-title">Одна пара за другой</h2>
+        <p>Это маджонг-пасьянс для одного игрока. Цель — убрать со стола все тайлы.</p>
+        <div class="rule-pair" aria-hidden="true"><div class="tile">${artwork("d5")}</div><div class="tile">${artwork("d5")}</div></div>
+        <ol class="rules">
+          <li>Выберите два одинаковых <strong>свободных</strong> тайла: сверху ничего нет, слева <strong>или</strong> справа — открытый край.</li>
+          <li>Любой цветок совпадает с любым цветком, любой сезон — с любым сезоном. Их рисунки могут отличаться.</li>
+          <li>Повторный клик снимает выделение. За пару — 100 очков. Следующая пара в течение 6 секунд повышает комбо, максимум ×10.</li>
+          <li>На уровень: 3 подсказки, 2 перемешивания и неограниченная отмена. Отмена перемешивания не возвращает лимит.</li>
+          <li>Без подсказок и перемешиваний — бонус 1 000 очков. Перезапуск сбрасывает серию побед; повторные пары не увеличивают общий счётчик.</li>
+          <li>Первые уровни: 48, 72 и 108 тайлов. Начиная с четвёртого — полный набор 144. Каждая новая раскладка решаема, но выбранный путь может привести в тупик.</li>
+          <li>С 50-го уровня — более плотные раскладки в 6 слоёв, со 100-го — в 7. Дальше асимметрия постепенно приближается к игровому пределу; новые варианты и номера уровней не заканчиваются. Сохранённые партии сохраняют исходную раскладку при перезапуске.</li>
+        </ol>
+        <p>На телефоне увеличьте тайлы кнопкой с лупой и прокручивайте стол. Клавиатура: Tab или стрелки — выбор, Enter — тайл, H — подсказка, Z — отмена, S — перемешивание, Esc — меню. Время в меню и на скрытой вкладке не учитывается. Выход из игры или использование инструментов прерывает комбо.</p>
+        <div class="dialog-actions"><button class="primary" data-action="close-dialog">Всё понятно</button></div>
+      `);
     }
     function confirmRestart() {
       if (!store.game || store.game.status !== "playing" || busy) return;
@@ -1108,7 +1137,7 @@ The complete offline application lives in this file. No network requests or runt
     }
     function restart() {
       let game;
-      try { game = newGame(store.level, store.game.seed, store.game.peakPairs); }
+      try { game = newGame(store.level, store.game.seed, store.game.peakPairs, store.game.generatorVersion ?? 1); }
       catch (error) { showError("Не удалось начать уровень", error.message); return; }
       animationGeneration++; busy = false;
       store.game = game; store.stats.streak = 0;
@@ -1220,8 +1249,19 @@ The complete offline application lives in this file. No network requests or runt
       }).filter(c => c.primary > 1).sort((a, b) => a.distance - b.distance);
       (candidates[0]?.el || free[0]).focus();
     });
-    document.addEventListener("visibilitychange", () => { tick(); clearCombo(); lastTick = performance.now(); save(); });
-    window.addEventListener("pagehide", () => { tick(); save(); });
+    document.addEventListener("visibilitychange", () => {
+      // Charge the interval to its previous visibility state, before switching.
+      tick();
+      pageVisible = !document.hidden;
+      lastTick = performance.now();
+      clearCombo(); save();
+    });
+    window.addEventListener("pagehide", () => {
+      tick(); pageActive = false; clearCombo(); save();
+    });
+    window.addEventListener("pageshow", () => {
+      pageActive = true; pageVisible = !document.hidden; lastTick = performance.now();
+    });
     window.addEventListener("beforeunload", () => { tick(); save(); });
     window.addEventListener("resize", fitBoard);
     if (window.ResizeObserver) new ResizeObserver(fitBoard).observe($("board-viewport"));
